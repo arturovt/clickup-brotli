@@ -152,7 +152,7 @@ Such architecture is hard to maintain and I don't think it's cost-effective.
 
 ### The most optimal architecture
 
-The Lambda@Edge is a single lambda, the only difference is that only CloudFront can be its trigger. This lambda can be created only in us-east-1 region but then it gets replicated between CloudFront edge locations.
+The Lambda@Edge is a single lambda, the only difference is that only CloudFront can be its trigger. This lambda can be created only in us-east-1 region but then it gets replicated among CloudFront edge locations.
 
 See the CloudFormation template below. Note that the `Custom::CrossRegionStack` is just a custom resource that allows to create a cross-region stack. Its lambda is triggered by CloudFormation, it passes all properties that are going after the `ServiceToken` to the `event.ResourceProperties`. In simple words it looks as following:
 
