@@ -184,6 +184,12 @@ export const handler: CloudFormationCustomResourceHandler = async (
       })
       .promise();
 
+    await cloudformation
+      .waitFor('stackDeleteComplete', {
+        StackName: event.ResourceProperties.StackName,
+      })
+      .promise();
+
     return await response.send(event, context, response.SUCCESS);
   }
 
@@ -216,6 +222,7 @@ async function createStack(
     .createStack({
       StackName: event.ResourceProperties.StackName,
       TemplateBody: event.ResourceProperties.TemplateBody,
+      Parameters: getParameters(event.ResourceProperties.Parameters),
     })
     .promise();
 
@@ -236,6 +243,7 @@ async function updateStack(
     .updateStack({
       StackName: event.ResourceProperties.StackName,
       TemplateBody: event.ResourceProperties.TemplateBody,
+      Parameters: getParameters(event.ResourceProperties.Parameters),
     })
     .promise();
 
@@ -264,6 +272,13 @@ async function getOutputs(
   }, {});
 }
 
+function getParameters(
+  event: CloudFormationCustomResourceEvent
+): CloudFormation.Parameters {
+  return Object.entries(
+    event.ResourceProperties.Parameters
+  ).map(([key, value]) => ({ ParameterKey: key, ParameterValue: value }));
+}
 ```
 </p>
 </details>
@@ -312,6 +327,7 @@ Resources:
         Resources:
           EdgeLambda:
             Type: AWS::Lambda::Function
+            DeletionPolicy: Retain
             Properties:
               Runtime: nodejs12.x
               Timeout: 5
