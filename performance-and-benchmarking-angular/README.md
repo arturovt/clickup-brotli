@@ -7,7 +7,7 @@
 
 The `performance` (and especially `performance.measure`) API depends on computer speed and has a high variance (dispersion) factor. I noticed this several times that results were different depending on the load on my computer. We could still get the average value for some specific component, which is good 👌.
 
-Такие измерения называются _метастабильными_, чтобы достичь _стабильного_ измерения нужна идеальная балансировка ресурсов компьютера.
+Such measurements are called _metastable_, in order to achieve a _stable_ measurement, a perfect balance of computer resources is needed.
 
 ## Small theory
 
@@ -34,7 +34,7 @@ In a system where the code is executed in one thread, the throughput is calculat
 
 ## Angular built-in profiler
 
-Angular already has a built-in change detection profiler which can be enabled in development mode:
+Angular already has a built-in change detection profiler which can be enabled in the development mode:
 
 ```ts
 async function bootstrap() {
@@ -58,7 +58,9 @@ async function bootstrap() {
 bootstrap();
 ```
 
-Therefore it will be accessible in the `window.ng` property. Let's open the DevTools and run it:
+> ⚠️ Such code can be shipped to the repository only with `if (ngDevMode)` condition. `isDevMode()` is a runtime function which will not be tree-shaken away by Terser, thus `enableDebugTools` and `AngularProfiler` will be bundled into the production bundle.
+
+Therefore it will be accessible in the `window.ng` property. Let's open the DevTools and run it (note that I'm on the notifications page):
 
 ```js
 ng.profiler.timeChangeDetection({ record: true })
@@ -66,6 +68,89 @@ ng.profiler.timeChangeDetection({ record: true })
 
 ![Angular profiler result](./docs/angular-profiler-result.png)
 
-This profiler doesn't take into account that there can be `OnPush` components, even if the root component is marked as `OnPush` then the `ApplicationRef.tick()` will act as a noop.
+> ⚠️ The profiler runs ticks during 500 ms.
 
-Considering the above image we can calcuate the latency and throughput. Given the latency is 0.04 (ms per `tick()`), then the throughput will equal 1 / 0.04 = 25 (change detections per second).
+> ⚠️ The profiler doesn't take into account that there can be `OnPush` components, even if the root component is marked as `OnPush` then the `ApplicationRef.tick()` will act as a noop.
+
+Considering the above image we can calcuate the latency and throughput. Given the latency is 0.04 (ms per `tick()`), then the throughput will equal 1000 (ms in 1 minute) / 0.04 = 25000 (change detections per second).
+
+## Going deep
+
+We can still use the same Angular's built-in profiler but we need to bypass `OnPush` checks.
+
+### Bypassing `OnPush` checks in ViewEngine (for profiling purposes)
+
+There is a function called `callViewAction` that does `OnPush` checks:
+
+```js
+function callViewAction(view, action) {
+  switch (action) {
+    case ViewAction.CheckAndUpdate:
+      if ((viewState & 128 /* Destroyed */) === 0) {
+        if ((viewState & 12 /* CatDetectChanges */) === 12 /* CatDetectChanges */) {
+          checkAndUpdateView(view);
+        } else if (viewState & 64 /* CheckProjectedViews */) {
+          execProjectedViewsAction(view, ViewAction.CheckAndUpdateProjectedViews);
+        }
+      }
+  }
+}
+```
+
+`CatDetectChanges` equals `Attached | ChecksEnabled`, which is `8 (Attached) | 4 (ChecksEnabled) = 12`. Thus `(view.state & 12) === 12` will equal `true` when the view is attached to the change detection tree (it can be detached by calling `detach()` on the `ChangeDetectorRef`) and _checks are enabled_. When do checks become enabled? Angular calls `checkAndUpdateDirectiveInline` which is responsible for checking `@Input()` properties. If any binding has been changed then Angular calls `updateProp` which changes the view state:
+```js
+if (view.def.flags & 2 /* OnPush */) {
+  view.state |= 8 /* ChecksEnabled */;
+}
+```
+
+We can swap `if` conditions:
+
+```js
+function callViewAction(view, action) {
+  switch (action) {
+    case ViewAction.CheckAndUpdate:
+      if ((viewState & 128 /* Destroyed */) === 0) {
+        if (viewState & 64 /* CheckProjectedViews */) {
+          execProjectedViewsAction(view, ViewAction.CheckAndUpdateProjectedViews);
+        } else {
+          checkAndUpdateView(view);
+        }
+      }
+  }
+}
+```
+
+### Bypassing `OnPush` checks in Ivy (for profiling purposes)
+
+There is a function called `refreshComponents` that does `OnPush` checks:
+
+```js
+function refreshComponent(hostLView, componentHostIdx) {
+  ...
+  if (componentView[FLAGS] & (16 /* CheckAlways */ | 64 /* Dirty */)) {
+    refreshView(tView, componentView, tView.template, componentView[CONTEXT]);
+  } else if (componentView[TRANSPLANTED_VIEWS_TO_REFRESH] > 0) {
+    refreshContainsDirtyView(componentView);
+  }
+}
+```
+
+We can swap `if` conditions:
+
+```js
+function refreshComponent(hostLView, componentHostIdx) {
+  ...
+  if (componentView[TRANSPLANTED_VIEWS_TO_REFRESH] > 0) {
+    refreshContainsDirtyView(componentView);
+  } else {
+    refreshView(tView, componentView, tView.template, componentView[CONTEXT]);
+  }
+}
+```
+
+Let's run the profiler again:
+
+![Angular profiler result without OnPush](./docs/angular-profiler-result-no-onpush.png)
+
+Oh, we can see that the `msPerTick` now differs when `OnPush` cheks are bypassed therefore all components are checked. So now the throughput equals 1000 / 1.57 = 636 (change detections per second).
