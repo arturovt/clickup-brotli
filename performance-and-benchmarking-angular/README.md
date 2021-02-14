@@ -7,6 +7,8 @@
 
 The `performance` (and especially `performance.measure`) API depends on computer speed and has a high variance (dispersion) factor. I noticed this several times that results were different depending on the load on my computer. We could still get the average value for some specific component, which is good 👌.
 
+Такие измерения называются _метастабильными_, чтобы достичь _стабильного_ измерения нужна идеальная балансировка ресурсов компьютера.
+
 ## Small theory
 
 Basically, the speed of systems can be characterized by such metrics as latency and throughput:
@@ -23,6 +25,12 @@ It's enough to understand that _throughput_ can be increased by decreasing _late
 In the above example the latency will equal to the sum of timings per each local change detection. There are 8 local change detections:
 
 ![Latency formula](./docs/latency-formula.png)
+
+### Throughput
+
+In a system where the code is executed in one thread, the throughput is calculated using the following formula:
+
+![Throughput formula](./docs/throughput-formula.png)
 
 ## Angular built-in profiler
 
@@ -59,3 +67,5 @@ ng.profiler.timeChangeDetection({ record: true })
 ![Angular profiler result](./docs/angular-profiler-result.png)
 
 This profiler doesn't take into account that there can be `OnPush` components, even if the root component is marked as `OnPush` then the `ApplicationRef.tick()` will act as a noop.
+
+Considering the above image we can calcuate the latency and throughput. Given the latency is 0.04 (ms per `tick()`), then the throughput will equal 1 / 0.04 = 25 (change detections per second).
