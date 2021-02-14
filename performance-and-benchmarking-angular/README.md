@@ -12,6 +12,7 @@
   * [ViewEngine](#viewengine)
   * [Ivy](#ivy)
 - [Tracing layout updates](#tracing-layout-updates)
+- [Tracing asynchronous tasks](#tracing-asynchronous-tasks)
 
 ## The problem behind the performance browser API
 
@@ -404,3 +405,72 @@ Now let's open this file, we can see that there have been 2 layout updates durin
 The `getHighContrastMode` is a function called by `@angular/cdk`. Another layout update was caused by this piece of code `"lineNumber": 122735`, if we open `vendor.js` and jump to `122735` we can see that the `promise-window` gets `clientWidth` and triggers another layout update.
 
 The `puppeteer` has richer functionality but it still uses the `chrome-remote-interface` internally. We can open existing pages with `puppeteer`, search for DOM elements and dispatch events and then do the tracing stuff. It's harder to do with `chrome-remote-interface` since it requires providing `x` and `y` for the specific DOM element.
+
+## Tracing asynchronous tasks
+
+<details><summary>Collapse patch-zone.ts</summary>
+<p>
+
+```ts
+/// <reference types="zone.js" />
+
+import { NgModuleRef, NgZone } from '@angular/core';
+
+declare global {
+  interface Window {
+    debuggable: boolean;
+  }
+}
+
+function getPrivateProperty<T>(target: any, property: string): T {
+  return target[property];
+}
+
+export function patchNgZone({
+  injector,
+}: NgModuleRef<import('./app/app.module').AppModule>) {
+  const ngZone = injector.get(NgZone);
+  const angularZone = getPrivateProperty<Zone>(ngZone, '_inner');
+  const zoneDelegate = getPrivateProperty<ZoneDelegate>(
+    angularZone,
+    '_zoneDelegate'
+  );
+  const invokeTask = zoneDelegate.invokeTask;
+  zoneDelegate.invokeTask = (
+    target: Zone,
+    task: Task,
+    applyThis?: ThisType<unknown>,
+    applyArgs?: any[]
+  ) => {
+    if (window.debuggable) {
+      console.log('\n');
+      console.log(
+        `%c${task.source} has triggered change detection`,
+        'background: white; color: red; font-size: 14px'
+      );
+      const target = getPrivateProperty<HTMLElement | undefined>(
+        task,
+        'target'
+      );
+      target && console.log(target);
+      task.type === 'macroTask' && console.log(task.callback);
+      console.log('\n');
+    }
+    return invokeTask.call(zoneDelegate, target, task, applyThis, applyArgs);
+  };
+}
+```
+</p>
+</details>
+
+Now let's pass this function to `bootstrapModule().then`:
+
+```ts
+import { patchNgZone } from './patch-zone';
+
+document.addEventListener('DOMContentLoaded', () => {
+  platformBrowserDynamic().bootstrapModule(AppModule).then(patchNgZone);
+});
+```
+
+![Async tasks](./docs/async-tasks.png)
