@@ -72,7 +72,7 @@ ng.profiler.timeChangeDetection({ record: true })
 
 > ⚠️ The profiler doesn't take into account that there can be `OnPush` components, even if the root component is marked as `OnPush` then the `ApplicationRef.tick()` will act as a noop.
 
-Considering the above image we can calcuate the latency and throughput. Given the latency is 0.04 (ms per `tick()`), then the throughput will equal 1000 (ms in 1 minute) / 0.04 = 25000 (change detections per second).
+Considering the above image we can calcuate the latency and throughput. Given the latency is 0.04 (ms per `tick()`), then the throughput will equal `1000 (ms in 1 second) / 0.04 = 25000` (change detections per second).
 
 ## Going deep
 
@@ -153,4 +153,4 @@ Let's run the profiler again:
 
 ![Angular profiler result without OnPush](./docs/angular-profiler-result-no-onpush.png)
 
-Oh, we can see that the `msPerTick` now differs when `OnPush` cheks are bypassed therefore all components are checked. So now the throughput equals 1000 / 1.57 = 636 (change detections per second).
+Oh, we can see that the `msPerTick` now differs when `OnPush` cheks are bypassed therefore all components are checked. So now the throughput equals `1000 / 1.57 = 636` (change detections per second).
