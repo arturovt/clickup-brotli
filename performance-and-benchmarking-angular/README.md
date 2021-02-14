@@ -1,9 +1,19 @@
 # Table of contents
 
-...
-...
+- [The problem behind the performance browser API](#the-problem-behind-the-performance-browser-api)
+- [Small theory](#small-theory)
+  * [Latency](#latency)
+  * [Throughput](#throughput)
+- [Angular built-in profiler](#angular-built-in-profiler)
+- [Going deeper](#going-deeper)
+  * [Bypassing OnPush checks in ViewEngine](#bypassing-onpush-checks-in-viewengine)
+  * [Bypassing OnPush checks in Ivy](#bypassing-onpush-checks-in-ivy)
+- [Tracing the number of change detections](#tracing-the-number-of-change-detections)
+  * [ViewEngine](#viewengine)
+  * [Ivy](#ivy)
+- [Tracing layout updates](#tracing-layout-updates)
 
-## The problem behind the `performance` browser API
+## The problem behind the performance browser API
 
 The `performance` (and especially `performance.measure`) API depends on computer speed and has a high variance (dispersion) factor. I noticed this several times that results were different depending on the load on my computer. We could still get the average value for some specific component, which is good 👌.
 
@@ -78,7 +88,7 @@ Considering the above image we can calcuate the latency and throughput. Given th
 
 We can still use the same Angular's built-in profiler but we need to bypass `OnPush` checks.
 
-### Bypassing `OnPush` checks in ViewEngine (for profiling purposes)
+### Bypassing OnPush checks in ViewEngine
 
 There is a function called `callViewAction` that does `OnPush` checks:
 
@@ -131,7 +141,7 @@ function callViewAction(view, action) {
 }
 ```
 
-### Bypassing `OnPush` checks in Ivy (for profiling purposes)
+### Bypassing OnPush checks in Ivy
 
 There is a function called `refreshComponents` that does `OnPush` checks:
 
