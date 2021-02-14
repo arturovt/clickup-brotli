@@ -13,8 +13,8 @@ Such measurements are called _metastable_, in order to achieve a _stable_ measur
 
 Basically, the speed of systems can be characterized by such metrics as latency and throughput:
 
-* _latency_ is the time it takes for **one** _global change detection_ to pass through the entire tree from the root component and until the very last
-* _throughput_ is the number of _global change detections_ that can be run in fixed time
+- _latency_ is the time it takes for **one** _global change detection_ to pass through the entire tree from the root component and until the very last
+- _throughput_ is the number of _global change detections_ that can be run in fixed time
 
 It's enough to understand that _throughput_ can be increased by decreasing _latency_. In order to reduce the _latency_, we need to reduce the number of _local change detections_ (since the _global change detection_ consists of many _local change detections_ for each component in the tree).
 
@@ -63,7 +63,7 @@ bootstrap();
 Therefore it will be accessible in the `window.ng` property. Let's open the DevTools and run it (note that I'm on the notifications page):
 
 ```js
-ng.profiler.timeChangeDetection({ record: true })
+ng.profiler.timeChangeDetection({ record: true });
 ```
 
 ![Angular profiler result](./docs/angular-profiler-result.png)
@@ -74,7 +74,7 @@ ng.profiler.timeChangeDetection({ record: true })
 
 Considering the above image we can calcuate the latency and throughput. Given the latency is 0.04 (ms per `tick()`), then the throughput will equal `1000 (ms in 1 second) / 0.04 = 25000` (change detections per second).
 
-## Going deep
+## Going deeper
 
 We can still use the same Angular's built-in profiler but we need to bypass `OnPush` checks.
 
@@ -86,11 +86,17 @@ There is a function called `callViewAction` that does `OnPush` checks:
 function callViewAction(view, action) {
   switch (action) {
     case ViewAction.CheckAndUpdate:
-      if ((viewState & 128 /* Destroyed */) === 0) {
-        if ((viewState & 12 /* CatDetectChanges */) === 12 /* CatDetectChanges */) {
+      if ((viewState & 128) /* Destroyed */ === 0) {
+        if (
+          (viewState & 12) /* CatDetectChanges */ ===
+          12 /* CatDetectChanges */
+        ) {
           checkAndUpdateView(view);
         } else if (viewState & 64 /* CheckProjectedViews */) {
-          execProjectedViewsAction(view, ViewAction.CheckAndUpdateProjectedViews);
+          execProjectedViewsAction(
+            view,
+            ViewAction.CheckAndUpdateProjectedViews
+          );
         }
       }
   }
@@ -98,6 +104,7 @@ function callViewAction(view, action) {
 ```
 
 `CatDetectChanges` equals `Attached | ChecksEnabled`, which is `8 (Attached) | 4 (ChecksEnabled) = 12`. Thus `(view.state & 12) === 12` will equal `true` when the view is attached to the change detection tree (it can be detached by calling `detach()` on the `ChangeDetectorRef`) and _checks are enabled_. When do checks become enabled? Angular calls `checkAndUpdateDirectiveInline` which is responsible for checking `@Input()` properties. If any binding has been changed then Angular calls `updateProp` which changes the view state:
+
 ```js
 if (view.def.flags & 2 /* OnPush */) {
   view.state |= 8 /* ChecksEnabled */;
@@ -110,9 +117,12 @@ We can swap `if` conditions:
 function callViewAction(view, action) {
   switch (action) {
     case ViewAction.CheckAndUpdate:
-      if ((viewState & 128 /* Destroyed */) === 0) {
+      if ((viewState & 128) /* Destroyed */ === 0) {
         if (viewState & 64 /* CheckProjectedViews */) {
-          execProjectedViewsAction(view, ViewAction.CheckAndUpdateProjectedViews);
+          execProjectedViewsAction(
+            view,
+            ViewAction.CheckAndUpdateProjectedViews
+          );
         } else {
           checkAndUpdateView(view);
         }
@@ -154,3 +164,233 @@ Let's run the profiler again:
 ![Angular profiler result without OnPush](./docs/angular-profiler-result-no-onpush.png)
 
 Oh, we can see that the `msPerTick` now differs when `OnPush` cheks are bypassed therefore all components are checked. So now the throughput equals `1000 / 1.57 = 636` (change detections per second).
+
+## Tracing the number of change detections
+
+We have to be able to know how many change detections run per some component.
+
+### ViewEngine
+
+There is a `checkAndUpdate` function which is called for each component when the change detection is run:
+
+```js
+function checkAndUpdateView(view) {
+  ...
+}
+```
+
+```js
+function checkAndUpdateView(view) {
+  const t0 = performance.now();
+
+  // `checkAndUpdateView` body
+
+  if (view.component.constructor !== Object) {
+    const name = view.component.constructor.name;
+    const t1 = performance.now();
+    console.log(
+      `%c${t1 - t0} ms`,
+      'font-size: 14px; background: red; color: white;',
+      ` checkAndUpdateView() took for ${name}`
+    );
+  }
+}
+```
+
+### Ivy
+
+There is a `refreshView` function which is called for each component when the change detection is run:
+
+```js
+function refreshView(tView, lView, templateFn, context) {
+  ...
+}
+```
+
+We can place the single `console.log` to see how many times it's run for the specific component. Let's store the debuggable element in the global scope:
+
+```js
+function refreshView(tView, lView, templateFn, context) {
+  const debuggable =
+    lView[HOST] !== null &&
+    lView[HOST].tagName.toLowerCase() === window.debuggable;
+  if (debuggable) {
+    console.log(`refreshView() is called for the ${window.debuggable}`);
+  }
+}
+
+// Run this in the DevTools
+window.debuggable = 'cu-task-editor';
+```
+
+We can also measure it's execution:
+
+```js
+function refreshView(tView, lView, templateFn, context) {
+  const debuggable =
+    lView[HOST] !== null &&
+    lView[HOST].tagName.toLowerCase() === window.debuggable;
+  const t0 = debuggable && performance.now();
+
+  // `refreshView` body
+
+  if (debuggable) {
+    const t1 = performance.now();
+    console.log(
+      `%c${t1 - t0} ms`,
+      'font-size: 14px; background: red; color: white;',
+      ` refreshView() took for ${window.debuggable}`
+    );
+  }
+}
+```
+
+But as I said its execution time is _metastable_ and also it will not take a lot of time. We should focus primarily on the **number of calls** of these functions since they lead to layout updates. Less calls = less layout updates. We shouldn't trace the `refreshView` for the root component, but on the contrary, we need to focus on small components that can lead to significant layout updates.
+
+## Tracing layout updates
+
+I think that DevTools probably support that functionality but I'm more a fan of the `chrome-remote-interface` and `puppeteer` packages for tracing purposes. They can give much more information about layout updates and especially its triggers:
+
+<details><summary>Collapse trace.ts</summary>
+<p>
+
+```ts
+import fs = require('fs');
+import CDP = require('chrome-remote-interface');
+
+const categories = [
+  '-*',
+  'devtools.timeline',
+  'disabled-by-default-devtools.timeline',
+  'disabled-by-default-devtools.timeline.stack',
+];
+
+const enum LayoutUpdateEvent {
+  Layout = 'Layout',
+  UpdateLayoutTree = 'UpdateLayoutTree',
+}
+
+interface DevToolsEvent {
+  cat: string;
+  dur: number;
+  name: string;
+  ph: string;
+  pid: number;
+  tdur: number;
+  tid: number;
+  ts: number;
+  tts: number;
+  args: any;
+}
+
+interface TracingData {
+  value: DevToolsEvent[];
+}
+
+(async () => {
+  const tab = await CDP.New();
+  const client = await CDP({ tab });
+  const { Page, Tracing } = client;
+  const events: DevToolsEvent[] = [];
+
+  await Page.enable();
+  await Tracing.start({ categories: categories.join(',') });
+
+  Tracing.dataCollected(({ value }: TracingData) => {
+    events.push(...value);
+  });
+
+  await Page.navigate({ url: 'http://localhost:4200' });
+
+  await Page.loadEventFired();
+  await Tracing.end();
+  await Tracing.tracingComplete();
+
+  const layoutUpdateEvents = events
+    .filter(
+      ({ name }) =>
+        name === LayoutUpdateEvent.Layout ||
+        name === LayoutUpdateEvent.UpdateLayoutTree
+    )
+    .filter(({ args }) => !!args?.beginData?.stackTrace?.length);
+
+  fs.writeFileSync(
+    `./update-layout-events.${Date.now()}.json`,
+    JSON.stringify(layoutUpdateEvents, null, 4)
+  );
+
+  await CDP.Close({ id: tab.id });
+})();
+```
+</p>
+</details>
+
+Let's run it:
+
+```shell
+$ yarn ts-node  -O "{ \"module\": \"commonjs\" }" --transpile-only chrome.ts
+$ echo "There have been $(cat update-layout-events* | jq length) layout updates"
+```
+
+Now let's open this file, we can see that there have been 2 layout updates during the page load (only ClickUp loader was shown but not the whole application):
+
+```json
+[
+    {
+        "args": {
+            "beginData": {
+                "frame": "36DE239E49B204B7B736EF417DDA9480",
+                "stackTrace": [
+                    {
+                        "columnNumber": 17,
+                        "functionName": "",
+                        "lineNumber": 122735,
+                        "scriptId": "31",
+                        "url": "http://localhost:4200/vendor.js"
+                    }
+                ]
+            },
+            "elementCount": 0
+        },
+        "cat": "blink,devtools.timeline",
+        "dur": 22,
+        "name": "UpdateLayoutTree",
+        "ph": "X",
+        "pid": 2829964,
+        "tdur": 22,
+        "tid": 1,
+        "ts": 399598446271,
+        "tts": 401439
+    },
+    {
+        "args": {
+            "beginData": {
+                "frame": "36DE239E49B204B7B736EF417DDA9480",
+                "stackTrace": [
+                    {
+                        "columnNumber": 76,
+                        "functionName": "getHighContrastMode",
+                        "lineNumber": 118155,
+                        "scriptId": "31",
+                        "url": "http://localhost:4200/vendor.js"
+                    }
+                ]
+            },
+            "elementCount": 8
+        },
+        "cat": "blink,devtools.timeline",
+        "dur": 267,
+        "name": "UpdateLayoutTree",
+        "ph": "X",
+        "pid": 2829964,
+        "tdur": 267,
+        "tid": 1,
+        "ts": 399602264923,
+        "tts": 4189199
+    }
+]
+```
+
+The `getHighContrastMode` is a function called by `@angular/cdk`. Another layout update was caused by this piece of code `"lineNumber": 122735`, if we open `vendor.js` and jump to `122735` we can see that the `promise-window` gets `clientWidth` and triggers another layout update.
+
+The `puppeteer` has richer functionality but it still uses the `chrome-remote-interface` internally. We can open existing pages with `puppeteer`, search for DOM elements and dispatch events and then do the tracing stuff. It's harder to do with `chrome-remote-interface` since it requires providing `x` and `y` for the specific DOM element.
